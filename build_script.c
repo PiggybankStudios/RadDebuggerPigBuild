@@ -6,8 +6,32 @@ Description:
 	** None
 */
 
+//TODO: We need to do some gymnastics here to get metagen to compile with us since it's
+//      written to be a standalone .exe with it's own main entry point. We also conflict
+//      on a few names like ArrayCount and FileIter. All of this is "solvable" with these
+//      #defines and #undefs but it's quite ugly. Ideally the metagen logic would be written
+//      to be included in the PigBuild script, and could use whatever it wants from PigBuild
+//      so it wouldn't need to pull in conflicting names from the main codebase
+#define FileIter RaddbgFileIter
+#define main metagen_main
+#define wWinMain metagen_wWinMain
+#define wmain metagen_wmain
+
+#include "metagen/metagen_main.c"
+
+#undef wmain
+#undef wWinMain
+#undef main
+#undef FileIter
+#undef ArrayCount
+#undef Assert
+
 #define PIG_BUILD_PRINT_SYS_CMDS 0
 #include "pig_build.h"
+
+#if BUILDING_ON_WINDOWS
+#include <shellapi.h>
+#endif
 
 void DefaultArguments(StrArray* cmdLineArgs)
 {
@@ -70,10 +94,38 @@ void HandleCmdLineArgs(StrArray* cmdLineArgs);
 u64 GetTargetDefinitions(TargetDefinition* defsBufferOut);
 void FillCompilerAndLinkerFlags();
 
+#if BUILDING_ON_WINDOWS
+#if BUILD_CONSOLE_INTERFACE
+int wmain(int argc, WCHAR **argvWide)
+#else
+int wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nShowCmd)
+#endif
+#else
 int main(int argc, const char* argv[])
+#endif
 {
-	RecompileIfNeeded(nullptr);
+	StrArray buildScriptSourceFolders = MakeStrArrayVa(
+		"../src/metagen/",
+		"../pig_build/src"
+	);
+	RecompileIfNeeded(&buildScriptSourceFolders);
 	IF_WINDOWS(isMsvcInitialized = WasMsvcDevBatchRun());
+	
+	#if BUILDING_ON_WINDOWS && !BUILD_CONSOLE_INTERFACE
+	int argc;
+	LPWSTR *argvWide = CommandLineToArgvW(GetCommandLineW(), &argc);
+	#endif
+	
+	#if BUILDING_ON_WINDOWS
+	char** argv = (char**)malloc(sizeof(char*) * argc);
+	for (int aIndex = 0; aIndex < argc; aIndex++)
+	{
+		int utf8Length = WideCharToMultiByte(CP_UTF8, 0, argvWide[aIndex], -1, NULL, 0, NULL, NULL);
+		argv[aIndex] = (char*)malloc(utf8Length+1);
+		WideCharToMultiByte(CP_UTF8, 0, argvWide[aIndex], -1, argv[aIndex], utf8Length, NULL, NULL);
+		argv[aIndex][utf8Length] = '\0';
+	}
+	#endif
 	
 	StrArray cmdLineArgs = EMPTY;
 	for (u64 aIndex = 1; aIndex < argc; aIndex++) { AddStrNt(&cmdLineArgs, argv[aIndex]); }
@@ -122,6 +174,20 @@ int main(int argc, const char* argv[])
 	IF_WINDOWS(AddTag(&commonTags, T_WINDOWS));
 	IF_LINUX(AddTag(&commonTags, T_LINUX));
 	IF_OSX(AddTag(&commonTags, T_OSX));
+	
+	// +==============================+
+	// |         Run Metagen          |
+	// +==============================+
+	#if BUILDING_ON_WINDOWS
+	#if BUILD_CONSOLE_INTERFACE
+	int metagenReturnCode = metagen_wmain(argc, argvWide);
+	#else
+	int metagenReturnCode = metagen_wWinMain(hInstance, hPrevInstance, lpCmdLine, nShowCmd);
+	#endif
+	PrintLine("metagen returned: %d", metagenReturnCode);
+	#else
+	#warning Metagen not implemented on the current platform!
+	#endif
 	
 	// +==============================+
 	// | Process logo.rc -> logo.res  |
@@ -186,6 +252,8 @@ int main(int argc, const char* argv[])
 			PrintLine("[Successfully built %.*s!]", StrPrint(exePath));
 		}
 	}
+	
+	return 0;
 }
 
 // +--------------------------------------------------------------+
