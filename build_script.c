@@ -2,8 +2,6 @@
 File:   build_script.c
 Author: Taylor Robbins
 Date:   05\20\2026
-Description: 
-	** None
 */
 
 //TODO: We need to do some gymnastics here to get metagen to compile with us since it's
