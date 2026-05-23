@@ -76,20 +76,18 @@ void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFl
 // +--------------------------------------------------------------+
 int build_main(ProgramParams* params)
 {
-	StrArray buildScriptSourceFolders = MakeStrArrayVa(
-		"../src/metagen/",
-		"../pig_build/src",
-		"../build_targets.c" //TODO: This isn't actually supported yet!
+	StrArray buildScriptSourceFolders = MakeStrArrayBySplittingLit(false, "|",
+		"|../src/metagen"
+		"|../pig_build/src"
+		"|../build_targets.c" //TODO: File names aren't actually supported yet!
 	);
 	RecompileIfNeeded(&buildScriptSourceFolders);
 	IF_WINDOWS(bool isMsvcInitialized = WasMsvcDevBatchRun());
 	
-	// Default arguments (for convenience)
 	if (params->args.length == 0)
 	{
-		AddStrLit(&params->args, "debug"); //"debug" or "release"
-		AddStrLit(&params->args, "msvc"); //"msvc" or "clang"
-		AddStrLit(&params->args, "raddbg"); //"raddbg", "radlink", "radbin", "debugstringperf", "mule_module", "mule_hotload", "torture"
+		//"debug", "release", "msvc", "clang", "raddbg", "radlink", "radbin", "debugstringperf", "mule_module", "mule_hotload", "torture"
+		SplitStrIntoArrayLit(&params->args, false, " ", "debug msvc raddbg"); // Default arguments (for convenience)
 	}
 	
 	Array_Targets targets = GetTargetDefinitions();
@@ -142,7 +140,7 @@ int build_main(ProgramParams* params)
 		AddArgNt(&rcArgs, RC_OUTPUT_FILE, "logo.res");
 		AddArgNt(&rcArgs, CLI_QUOTED_ARG, "[ROOT]/data/logo.rc");
 		InitializeMsvcIf(StrLit(PIG_BUILD_ROOT), &isMsvcInitialized);
-		RunCliProgramAndExitOnFailure(StrLit(EXE_MSVC_RC), T_MSVC_RC T_WINDOWS, &rcArgs, StrLit("Failed to compile logo.rc into logo.res!"));
+		RunCliProgramAndExitOnFailureTagsLit(StrLit(EXE_MSVC_RC), T_MSVC_RC T_WINDOWS, &rcArgs, StrLit("Failed to compile logo.rc into logo.res!"));
 		AssertFileExist(StrLit("logo.res"), true);
 	}
 	#endif
@@ -184,7 +182,7 @@ int build_main(ProgramParams* params)
 			AddTag(&tags, def->isCpp ? T_LANG_CPP : T_LANG_C);
 			
 			if (options.useCompilerMsvc) { InitializeMsvcIf(StrLit(PIG_BUILD_ROOT), &isMsvcInitialized); }
-			RunCliProgramTagArrayAndExitOnFailure(compilerExe, &tags, &args, FormatStr("Failed to compile %.*s!", StrPrint(outputPath)));
+			RunCliProgramAndExitOnFailureTags(compilerExe, tags, &args, FormatStr("Failed to compile %.*s!", StrPrint(outputPath)));
 			AssertFileExist(outputPath, true);
 			
 			PrintLine("[Successfully built %.*s!]", StrPrint(exePath));
@@ -343,6 +341,10 @@ void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFl
 // +--------------------------------------------------------------+
 // |                       Real Entry-Point                       |
 // +--------------------------------------------------------------+
+// NOTE: win32_base.c defines either a "wmain" or a "wWinMain" entry point, whereas linux_base.c just does regular "main".
+//       In order to call metagen code we need to pass it all the arguments it would expect from being the real main entrypoint.
+//       Thus we need to replicate this choice here so we can pass them in build_main().
+//       To make our life easier we also convert all cmd-line arguments into UTF-8 strings in a StrArray in params.args.
 #if (BUILDING_ON_WINDOWS && BUILD_CONSOLE_INTERFACE)
 int wmain(int argc, WCHAR **argvWide)
 #elif BUILDING_ON_WINDOWS
