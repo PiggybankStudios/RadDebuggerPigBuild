@@ -4,10 +4,10 @@ Author: Taylor Robbins
 Date:   05\20\2026
 */
 
-#define PIG_BUILD_PRINT_SYS_CMDS 1
+#define PIG_BUILD_PRINT_SYS_CMDS 0
 #define SRC_FOLDER   "[ROOT]/src"
 #define LOCAL_FOLDER "[ROOT]/local"
-#define DEFAULT_CMD_LINE_ARGS "debug clang raddbg pgo" // debug, release, msvc, clang, raddbg, radlink, radbin, debugstringperf, mule_module, mule_hotload, torture, telemetry, spall, asan, ubsan, opengl, dwarf, pgo
+#define DEFAULT_CMD_LINE_ARGS "debug msvc raddbg" // debug, release, msvc, clang, raddbg, radlink, radbin, debugstringperf, mule_module, mule_hotload, torture, telemetry, spall, asan, ubsan, opengl, dwarf, pgo
 
 //TODO: We need to do some gymnastics here to get metagen to compile with us since it's
 //      written to be a standalone .exe with it's own main entry point. We also conflict
@@ -92,6 +92,7 @@ int build_main(ProgramParams* params)
 	CliArgs commonLinkerFlags = EMPTY;
 	FillCompilerAndLinkerFlags(&options, &commonCompilerFlags, &commonLinkerFlags);
 	
+	Str rcExe       = options.useCompilerMsvc ? StrLit(EXE_MSVC_RC)   : StrLit("llvm-rc");
 	Str compilerExe = options.useCompilerMsvc ? StrLit(EXE_MSVC_CL)   : StrLit(EXE_CLANG);
 	Str linkerExe   = options.useCompilerMsvc ? StrLit(EXE_MSVC_LINK) : StrLit(EXE_CLANG);
 	
@@ -133,7 +134,7 @@ int build_main(ProgramParams* params)
 		AddArgNt(&rcArgs, RC_OUTPUT_FILE, "logo.res");
 		AddArgNt(&rcArgs, CLI_QUOTED_ARG, "[ROOT]/data/logo.rc");
 		InitializeMsvcIf(StrLit(PIG_BUILD_ROOT), &isMsvcInitialized);
-		RunCliProgramAndExitOnFailureTagsLit(StrLit(EXE_MSVC_RC), "rc|Windows", &rcArgs, StrLit("Failed to compile logo.rc into logo.res!"));
+		RunCliProgramAndExitOnFailure(rcExe, &rcArgs, StrLit("Failed to compile logo.rc into logo.res!"));
 		AssertFileExist(StrLit("logo.res"), true);
 	}
 	#endif
@@ -182,6 +183,12 @@ int build_main(ProgramParams* params)
 		}
 	}
 	
+	if (options->pgo)
+	{
+		//TODO: pushd ..\local\lyra_pgo
+		//TODO: call radlink @lyra.rsp /rad_alt_pch_dir:..\local\lyra_pgo || exit /b 1
+	}
+	
 	return 0;
 }
 
@@ -199,17 +206,17 @@ void HandleCmdLineArgs(StrArray* cmdLineArgs, Array_Targets* targets, BuildOptio
 		Str argStr = cmdLineArgs->strings[aIndex];
 		if (!IsEmptyStr(argStr))
 		{
-			if      (StrAnyCaseEquals(argStr, StrLit("msvc")))               { options->useCompilerMsvc  =  true; AssertMsg(compilerSpecified  == false, "Conflicting compiler args!"); compilerSpecified  = true; }
-			else if (StrAnyCaseEquals(argStr, StrLit("clang")))              { options->useCompilerClang =  true; AssertMsg(compilerSpecified  == false, "Conflicting compiler args!"); compilerSpecified  = true; }
-			else if (StrAnyCaseEquals(argStr, StrLit("release")))            { options->releaseBuild     =  true; AssertMsg(buildModeSpecified == false, "Conflicting build-mode args!"); buildModeSpecified = true; }
-			else if (StrAnyCaseEquals(argStr, StrLit("debug")))              { options->releaseBuild     = false; AssertMsg(buildModeSpecified == false, "Conflicting build-mode args!"); buildModeSpecified = true; }
-			else if (StrAnyCaseEquals(argStr, StrLit("telemetry")))          { options->telemetry        =  true; }
-			else if (StrAnyCaseEquals(argStr, StrLit("spall")))              { options->spall            =  true; }
-			else if (StrAnyCaseEquals(argStr, StrLit("asan")))               { options->asan             =  true; }
-			else if (StrAnyCaseEquals(argStr, StrLit("ubsan")))              { options->ubsan            =  true; }
-			else if (StrAnyCaseEquals(argStr, StrLit("opengl")))             { options->opengl           =  true; }
-			else if (StrAnyCaseEquals(argStr, StrLit("dwarf")))              { options->useDwarfFormat   =  true; }
-			else if (StrAnyCaseEquals(argStr, StrLit("pgo")))                { options->pgo              =  true; }
+			if      (StrAnyCaseEquals(argStr, StrLit("msvc")))      { options->useCompilerMsvc  =  true; AssertMsg(compilerSpecified  == false, "Conflicting compiler args!"); compilerSpecified  = true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("clang")))     { options->useCompilerClang =  true; AssertMsg(compilerSpecified  == false, "Conflicting compiler args!"); compilerSpecified  = true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("release")))   { options->releaseBuild     =  true; AssertMsg(buildModeSpecified == false, "Conflicting build-mode args!"); buildModeSpecified = true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("debug")))     { options->releaseBuild     = false; AssertMsg(buildModeSpecified == false, "Conflicting build-mode args!"); buildModeSpecified = true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("telemetry"))) { options->telemetry        =  true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("spall")))     { options->spall            =  true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("asan")))      { options->asan             =  true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("ubsan")))     { options->ubsan            =  true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("opengl")))    { options->opengl           =  true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("dwarf")))     { options->useDwarfFormat   =  true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("pgo")))       { options->pgo              =  true; }
 			else
 			{
 				bool targetRecognized = false;
@@ -325,11 +332,12 @@ void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFl
 	AddTaggedArgNt(commonLinkerFlags, "cl",                LINK_OPT, "icf"); //TODO: What does this do?
 	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " LINK_OPT, "noicf"); //TODO: What does this do?
 	
-	//radlink extra options
+	//radlink extra flags
 	AddTaggedArg(commonLinkerFlags,   "cl|radlink", "/NOIMPLIB"); //TODO: What does this do?
 	AddTaggedArgNt(commonLinkerFlags, "cl|radlink",                LINK_NATVIS_PATH, SRC_FOLDER "/linker/linker.natvis");
 	AddTaggedArgNt(commonLinkerFlags, "clang|radlink", "-Xlinker " LINK_NATVIS_PATH, SRC_FOLDER "/linker/linker.natvis");
 	
+	// "auto_compile_flags"
 	if (options->telemetry)
 	{
 		WriteLine("[telemetry profiling enabled]");
@@ -397,6 +405,10 @@ void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFl
 			exit(1);
 		}
 	}
+	
+	//TODO:
+	// for /f %%i in ('call git describe --always --dirty')   do set compile=%compile% -DBUILD_GIT_HASH=\"%%i\"
+	// for /f %%i in ('call git rev-parse HEAD')              do set compile=%compile% -DBUILD_GIT_HASH_FULL=\"%%i\"
 }
 
 // +--------------------------------------------------------------+
