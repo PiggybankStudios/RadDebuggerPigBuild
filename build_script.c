@@ -7,7 +7,7 @@ Date:   05\20\2026
 #define PIG_BUILD_PRINT_SYS_CMDS 0
 #define SRC_FOLDER   "[ROOT]/src"
 #define LOCAL_FOLDER "[ROOT]/local"
-#define DEFAULT_CMD_LINE_ARGS "debug msvc raddbg" // debug, release, msvc, clang, raddbg, radlink, radbin, debugstringperf, mule_module, mule_hotload, torture, telemetry, spall, asan, ubsan, opengl, dwarf, pgo
+#define DEFAULT_CMD_LINE_ARGS "debug msvc raddbg" // debug, release, msvc, clang, raddbg, radlink, radbin, debugstringperf, torture, telemetry, spall, asan, ubsan, opengl, dwarf, pgo
 
 //TODO: We need to do some gymnastics here to get metagen to compile with us since it's
 //      written to be a standalone .exe with it's own main entry point. We also conflict
@@ -77,7 +77,12 @@ void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFl
 // +--------------------------------------------------------------+
 int build_main(ProgramParams* params)
 {
-	StrArray buildScriptSourceFolders = MakeStrArrayBySplittingLit(false, " | ", "../src/metagen | ../pig_build/src | ../build_targets.c");
+	StrArray buildScriptSourceFolders = MakeStrArrayBySplittingLit(false, "\n",
+		"../build_targets.c\n"
+		"../src/metagen\n"
+		"../src/base\n"
+		"../src/mdesk\n"
+	);
 	RecompileIfNeeded(buildScriptSourceFolders);
 	IF_WINDOWS(bool isMsvcInitialized = WasMsvcDevBatchRun());
 	
