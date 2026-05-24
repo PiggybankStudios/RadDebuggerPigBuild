@@ -4,10 +4,10 @@ Author: Taylor Robbins
 Date:   05\20\2026
 */
 
-#define PIG_BUILD_PRINT_SYS_CMDS 0
+#define PIG_BUILD_PRINT_SYS_CMDS 1
 #define SRC_FOLDER   "[ROOT]/src"
 #define LOCAL_FOLDER "[ROOT]/local"
-#define DEFAULT_CMD_LINE_ARGS "debug msvc raddbg" // debug, release, msvc, clang, raddbg, radlink, radbin, debugstringperf, mule_module, mule_hotload, torture
+#define DEFAULT_CMD_LINE_ARGS "debug clang raddbg pgo" // debug, release, msvc, clang, raddbg, radlink, radbin, debugstringperf, mule_module, mule_hotload, torture, telemetry, spall, asan, ubsan, opengl, dwarf, pgo
 
 //TODO: We need to do some gymnastics here to get metagen to compile with us since it's
 //      written to be a standalone .exe with it's own main entry point. We also conflict
@@ -92,8 +92,8 @@ int build_main(ProgramParams* params)
 	CliArgs commonLinkerFlags = EMPTY;
 	FillCompilerAndLinkerFlags(&options, &commonCompilerFlags, &commonLinkerFlags);
 	
-	Str compilerExe = options.useCompilerMsvc ? StrLit(EXE_MSVC_CL) : StrLit(EXE_CLANG);
-	Str linkerExe = options.useCompilerMsvc ? StrLit(EXE_MSVC_LINK) : StrLit(EXE_CLANG);
+	Str compilerExe = options.useCompilerMsvc ? StrLit(EXE_MSVC_CL)   : StrLit(EXE_CLANG);
+	Str linkerExe   = options.useCompilerMsvc ? StrLit(EXE_MSVC_LINK) : StrLit(EXE_CLANG);
 	
 	Str localFolderResolved = ResolveRootTo(StrLit(LOCAL_FOLDER), StrLit(".."));
 	if (!DoesFolderExist(localFolderResolved)) { mkdir(localFolderResolved.chars, FOLDER_PERMISSIONS); }
@@ -102,8 +102,8 @@ int build_main(ProgramParams* params)
 	AddTag(&commonTags, options.useCompilerMsvc ? "cl" : "clang");
 	if (options.useCompilerMsvc) { AddTag(&commonTags, "ClOrLink"); }
 	IF_WINDOWS(AddTag(&commonTags, "Windows"));
-	IF_LINUX(AddTag(&commonTags, "Linux"));
-	IF_OSX(AddTag(&commonTags, "OSX"));
+	IF_LINUX(AddTag(&commonTags,   "Linux"));
+	IF_OSX(AddTag(&commonTags,     "OSX"));
 	
 	// +==============================+
 	// |         Run Metagen          |
@@ -327,8 +327,76 @@ void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFl
 	
 	//radlink extra options
 	AddTaggedArg(commonLinkerFlags,   "cl|radlink", "/NOIMPLIB"); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, "cl|radlink",             LINK_NATVIS_PATH, SRC_FOLDER "/linker/linker.natvis");
+	AddTaggedArgNt(commonLinkerFlags, "cl|radlink",                LINK_NATVIS_PATH, SRC_FOLDER "/linker/linker.natvis");
 	AddTaggedArgNt(commonLinkerFlags, "clang|radlink", "-Xlinker " LINK_NATVIS_PATH, SRC_FOLDER "/linker/linker.natvis");
+	
+	if (options->telemetry)
+	{
+		WriteLine("[telemetry profiling enabled]");
+		AddTaggedArgNt(commonCompilerFlags, "cl",    CL_DEFINE,    "PROFILE_TELEMETRY=1");
+		AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "PROFILE_TELEMETRY=1");
+	}
+	if (options->spall)
+	{
+		WriteLine("[spall profiling enabled]");
+		AddTaggedArgNt(commonCompilerFlags, "cl",    CL_DEFINE,    "PROFILE_SPALL=1");
+		AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "PROFILE_SPALL=1");
+	}
+	if (options->asan)
+	{
+		if (options->useCompilerClang) { WriteLine("[asan enabled]"); }
+		else { WriteLine("WARNING: asan option ignored for msvc compiler"); }
+		AddTaggedArg(commonCompilerFlags, "clang", "-fsanitize=address"); //TODO: Add a #define for this
+	}
+	if (options->ubsan)
+	{
+		if (options->useCompilerClang) { WriteLine("[ubsan enabled]"); }
+		else { WriteLine("WARNING: ubsan option ignored for msvc compiler"); }
+		AddTaggedArg(commonCompilerFlags, "clang", "-fsanitize=undefined"); //TODO: Add a #define for this
+	}
+	if (options->opengl)
+	{
+		WriteLine("[opengl render backend]");
+		AddTaggedArgNt(commonCompilerFlags, "cl",    CL_DEFINE,    "R_BACKEND=R_BACKEND_OPENGL");
+		AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "R_BACKEND=R_BACKEND_OPENGL");
+	}
+	if (options->pgo)
+	{
+		if (options->useCompilerClang)
+		{
+			CliArgs whereArgs = EMPTY;
+			AddArg(&whereArgs, "llvm-profdata");
+			AddArg(&whereArgs, CLI_DISABLE_STDOUT_AND_STDERR);
+			RunCliProgramAndExitOnFailure(StrLit("where"), &whereArgs, StrLit("llvm-profdata is not in the PATH"));
+			
+			Str profRawPath = StrLit("build.profraw");
+			Str profDataPath = StrLit("build.profdata");
+			if (DoesFileExist(profRawPath))
+			{
+				CliArgs profDataArgs = EMPTY;
+				AddArg(&profDataArgs, "merge");
+				AddArgStr(&profDataArgs, CLI_QUOTED_ARG, profRawPath);
+				AddArgStr(&profDataArgs, "-output=\"[VAL]\"", profDataPath);
+				RunCliProgramAndExitOnFailure(StrLit("llvm-profdata"), &profDataArgs, StrLit("llvm-profdata ran into a problem!"));
+				AssertFileExist(profDataPath, true);
+				
+				AddTaggedArgStr(commonCompilerFlags, "clang", "-fprofile-use=\"[VAL]\"", profDataPath);
+			}
+			else
+			{
+				WriteLine("[pgo enabled]");
+				//TODO: This doesn't seem to be generating the build.profraw file that I expect
+				AddTaggedArg(commonCompilerFlags,   "clang", "-fprofile-generate");
+				AddTaggedArg(commonCompilerFlags,   "clang", "-mllvm");
+				AddTaggedArgNt(commonCompilerFlags, "clang", "-vp-counters-per-site=[VAL]", "5");
+			}
+		}
+		else
+		{
+			WriteLine_E("ERROR: PGO build is not supported with current compiler");
+			exit(1);
+		}
+	}
 }
 
 // +--------------------------------------------------------------+
@@ -362,15 +430,8 @@ int main(int argc, const char* argv[])
 	char** argv = (char**)malloc(sizeof(char*) * argc);
 	for (int aIndex = 0; aIndex < argc; aIndex++)
 	{
-		#if 1
 		Str argUtf8 = Utf16ToUtf8Str(MakeStr16Nt(argvWide[aIndex]));
 		argv[aIndex] = argUtf8.chars;
-		#else
-		int utf8Length = WideCharToMultiByte(CP_UTF8, 0, argvWide[aIndex], -1, NULL, 0, NULL, NULL);
-		argv[aIndex] = (char*)malloc(utf8Length+1);
-		WideCharToMultiByte(CP_UTF8, 0, argvWide[aIndex], -1, argv[aIndex], utf8Length, NULL, NULL);
-		argv[aIndex][utf8Length] = '\0';
-		#endif
 	}
 	#endif
 	
