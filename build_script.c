@@ -5,9 +5,9 @@ Date:   05\20\2026
 */
 
 #define PIG_BUILD_PRINT_SYS_CMDS 0
+#define DEFAULT_CMD_LINE_ARGS "debug msvc all" // debug, release, msvc, clang, all, raddbg, radlink, radbin, debugstringperf, torture, telemetry, spall, asan, ubsan, opengl, dwarf, pgo
 #define SRC_FOLDER   "[ROOT]/src"
 #define LOCAL_FOLDER "[ROOT]/local"
-#define DEFAULT_CMD_LINE_ARGS "debug msvc raddbg" // debug, release, msvc, clang, raddbg, radlink, radbin, debugstringperf, torture, telemetry, spall, asan, ubsan, opengl, dwarf, pgo
 
 //TODO: We need to do some gymnastics here to get metagen to compile with us since it's
 //      written to be a standalone .exe with it's own main entry point. We also conflict
@@ -222,6 +222,13 @@ void HandleCmdLineArgs(StrArray* cmdLineArgs, Array_Targets* targets, BuildOptio
 			else if (StrAnyCaseEquals(argStr, StrLit("opengl")))    { options->opengl           =  true; }
 			else if (StrAnyCaseEquals(argStr, StrLit("dwarf")))     { options->useDwarfFormat   =  true; }
 			else if (StrAnyCaseEquals(argStr, StrLit("pgo")))       { options->pgo              =  true; }
+			else if (StrAnyCaseEquals(argStr, StrLit("all")))
+			{
+				for (u64 tIndex = 0; tIndex < targets->length; tIndex++)
+				{
+					AddStrNt(&options->requestedTargets, targets->targets[tIndex].name);
+				}
+			}
 			else
 			{
 				bool targetRecognized = false;
@@ -258,6 +265,17 @@ void HandleCmdLineArgs(StrArray* cmdLineArgs, Array_Targets* targets, BuildOptio
 	
 	if (!buildModeSpecified) { PrintLine("[default mode `%s`]", options->releaseBuild ? "release" : "debug"); }
 	else { PrintLine("[%s mode]", options->releaseBuild ? "release" : "debug"); }
+	
+	if (options->telemetry && (!DoesFolderExist(StrLit("../telemetry")) || !DoesFileExist(StrLit("../telemetry/rad_tm.h"))))
+	{
+		WriteLine_E("In order to compile with telemetry you must buy it from RAD and place header files into the telemetry/ folder!");
+		exit(1);
+	}
+	if (options->spall && (!DoesFolderExist(StrLit("../spall")) || !DoesFileExist(StrLit("../spall/spall.h"))))
+	{
+		WriteLine_E("In order to compile with spall you must buy spall on itch and place spall.h into the spall/ folder!");
+		exit(1);
+	}
 }
 
 // +--------------------------------------------------------------+
@@ -270,17 +288,21 @@ void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFl
 	AddTaggedArg(commonCompilerFlags,   "clang", CLANG_FULL_FILE_PATHS);
 	AddTaggedArg(commonCompilerFlags,   "cl",    CL_DEBUG_INFO_IN_OBJ);
 	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_ENABLE_LANG_CONFORMANCE_OPTION, "preprocessor");
-	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_INCLUDE_DIR,    SRC_FOLDER);
-	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_INCLUDE_DIR, SRC_FOLDER);
-	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_INCLUDE_DIR,    LOCAL_FOLDER);
-	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_INCLUDE_DIR, LOCAL_FOLDER);
-	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "_USE_MATH_DEFINES");
-	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "strdup=_strdup");
-	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "_printf=printf");
 	AddTaggedArg(commonCompilerFlags,   "clang", "-Xclang -flto-visibility-public-std"); //TODO: What does this do?
 	AddTaggedArgNt(commonCompilerFlags, "clang", "-ferror-limit=[VAL]", "10000"); //TODO: What does this do?
 	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_M_FLAG, "cx16"); //TODO: What does this do?
 	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_M_FLAG, "sha"); //TODO: What does this do?
+	
+	// Defines
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "_USE_MATH_DEFINES");
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "strdup=_strdup");
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "_printf=printf");
+	
+	// Include Folders
+	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_INCLUDE_DIR,    SRC_FOLDER);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_INCLUDE_DIR, SRC_FOLDER);
+	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_INCLUDE_DIR,    LOCAL_FOLDER);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_INCLUDE_DIR, LOCAL_FOLDER);
 	
 	// Debug/Release Dependent Options
 	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_OPTIMIZATION_LEVEL, options->releaseBuild ? "2" : "d");
@@ -319,23 +341,23 @@ void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFl
 	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_INCOMP_PNTR_DISCARDS_QUALIFIERS);
 	
 	// Linker flags (for MSVC these have to come after the /link argument)
-	AddTaggedArg(commonLinkerFlags,   "cl|dll",            LINK_BUILD_DLL);
-	AddTaggedArg(commonLinkerFlags,   "clang|dll",         LINK_BUILD_DLL);
-	AddTaggedArgNt(commonLinkerFlags, "clang",             "-fuse-ld=[VAL]", "lld"); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, "Windows|dll=false", CLI_QUOTED_ARG, "logo.res");
-	AddTaggedArgNt(commonLinkerFlags, "cl",                "/MANIFEST:[VAL]", "EMBED");
-	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " "/MANIFEST:[VAL]", "EMBED");
-	AddTaggedArg(commonLinkerFlags,   "cl",                LINK_DISABLE_INCREMENTAL);
-	AddTaggedArgNt(commonLinkerFlags, "cl",                "/pdbaltpath:[VAL]", "%_PDB%");
-	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " "/pdbaltpath:[VAL]", "%_PDB%");
-	AddTaggedArgNt(commonLinkerFlags, "cl",                LINK_NATVIS_PATH, SRC_FOLDER "/natvis/base.natvis");
-	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " LINK_NATVIS_PATH, SRC_FOLDER "/natvis/base.natvis");
-	AddTaggedArg(commonLinkerFlags,   "cl",                LINK_NO_EXP); //TODO: What does this do?
-	AddTaggedArg(commonLinkerFlags,   "cl",                LINK_NO_COFF_GRP_INFO); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, "cl",                LINK_OPT, "ref"); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " LINK_OPT, "ref"); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, "cl",                LINK_OPT, "icf"); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " LINK_OPT, "noicf"); //TODO: What does this do?
+	AddTaggedArg(commonLinkerFlags,   "cl|dll",       LINK_BUILD_DLL);
+	AddTaggedArg(commonLinkerFlags,   "clang|dll",    LINK_BUILD_DLL);
+	AddTaggedArgNt(commonLinkerFlags, "clang",        "-fuse-ld=[VAL]", "lld"); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "Windows|!dll", CLI_QUOTED_ARG, "logo.res");
+	AddTaggedArgNt(commonLinkerFlags, "cl",           "/MANIFEST:[VAL]", "EMBED");
+	AddTaggedArgNt(commonLinkerFlags, "clang",        "-Xlinker " "/MANIFEST:[VAL]", "EMBED");
+	AddTaggedArg(commonLinkerFlags,   "cl",           LINK_DISABLE_INCREMENTAL);
+	AddTaggedArgNt(commonLinkerFlags, "cl",           "/pdbaltpath:[VAL]", "%_PDB%");
+	AddTaggedArgNt(commonLinkerFlags, "clang",        "-Xlinker " "/pdbaltpath:[VAL]", "%_PDB%");
+	AddTaggedArgNt(commonLinkerFlags, "cl",           LINK_NATVIS_PATH, SRC_FOLDER "/natvis/base.natvis");
+	AddTaggedArgNt(commonLinkerFlags, "clang",        "-Xlinker " LINK_NATVIS_PATH, SRC_FOLDER "/natvis/base.natvis");
+	AddTaggedArg(commonLinkerFlags,   "cl",           LINK_NO_EXP); //TODO: What does this do?
+	AddTaggedArg(commonLinkerFlags,   "cl",           LINK_NO_COFF_GRP_INFO); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "cl",           LINK_OPT, "ref"); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "clang",        "-Xlinker " LINK_OPT, "ref"); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "cl",           LINK_OPT, "icf"); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "clang",        "-Xlinker " LINK_OPT, "noicf"); //TODO: What does this do?
 	
 	//radlink extra flags
 	AddTaggedArg(commonLinkerFlags,   "cl|radlink", "/NOIMPLIB"); //TODO: What does this do?
@@ -354,6 +376,12 @@ void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFl
 		WriteLine("[spall profiling enabled]");
 		AddTaggedArgNt(commonCompilerFlags, "cl",    CL_DEFINE,    "PROFILE_SPALL=1");
 		AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "PROFILE_SPALL=1");
+		AddTaggedArgNt(commonCompilerFlags, "cl",    CL_INCLUDE_DIR, "[ROOT]/spall");
+		AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_INCLUDE_DIR, "[ROOT]/spall");
+		//TODO: Fix the following compiler errors:
+		//      src\base\base_profile.c(11): warning C4047: '=': 'void *' differs in levels of indirection from 'int'
+		//      src\base\base_profile.c(17): error C2223: left of '->pid' must point to struct/union
+		//      src\base\base_entry_point.c(39): error C2440: '=': cannot convert from 'int' to 'SpallProfile'
 	}
 	if (options->asan)
 	{
