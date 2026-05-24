@@ -183,7 +183,7 @@ int build_main(ProgramParams* params)
 		}
 	}
 	
-	if (options->pgo)
+	if (options.pgo)
 	{
 		//TODO: pushd ..\local\lyra_pgo
 		//TODO: call radlink @lyra.rsp /rad_alt_pch_dir:..\local\lyra_pgo || exit /b 1

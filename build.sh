@@ -1,2 +1,2 @@
 #!/bin/bash
-./pig_build/shell/build.sh "$@"
+PIG_BUILD_FLAGS="-I ../src" && ./pig_build/shell/build.sh "$@"
