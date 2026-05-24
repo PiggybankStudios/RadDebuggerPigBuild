@@ -7,6 +7,7 @@ Date:   05\20\2026
 #define PIG_BUILD_PRINT_SYS_CMDS 0
 #define SRC_FOLDER   "[ROOT]/src"
 #define LOCAL_FOLDER "[ROOT]/local"
+#define DEFAULT_CMD_LINE_ARGS "debug msvc raddbg" // debug, release, msvc, clang, raddbg, radlink, radbin, debugstringperf, mule_module, mule_hotload, torture
 
 //TODO: We need to do some gymnastics here to get metagen to compile with us since it's
 //      written to be a standalone .exe with it's own main entry point. We also conflict
@@ -76,19 +77,11 @@ void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFl
 // +--------------------------------------------------------------+
 int build_main(ProgramParams* params)
 {
-	StrArray buildScriptSourceFolders = MakeStrArrayBySplittingLit(false, "|",
-		"|../src/metagen"
-		"|../pig_build/src"
-		"|../build_targets.c" //TODO: File names aren't actually supported yet!
-	);
-	RecompileIfNeeded(&buildScriptSourceFolders);
+	StrArray buildScriptSourceFolders = MakeStrArrayBySplittingLit(false, " | ", "../src/metagen | ../pig_build/src | ../build_targets.c");
+	RecompileIfNeeded(buildScriptSourceFolders);
 	IF_WINDOWS(bool isMsvcInitialized = WasMsvcDevBatchRun());
 	
-	if (params->args.length == 0)
-	{
-		//"debug", "release", "msvc", "clang", "raddbg", "radlink", "radbin", "debugstringperf", "mule_module", "mule_hotload", "torture"
-		SplitStrIntoArrayLit(&params->args, false, " ", "debug msvc raddbg"); // Default arguments (for convenience)
-	}
+	if (params->args.length == 0) { SplitStrIntoArrayLit(&params->args, false, " ", DEFAULT_CMD_LINE_ARGS); }
 	
 	Array_Targets targets = GetTargetDefinitions();
 	
@@ -106,11 +99,11 @@ int build_main(ProgramParams* params)
 	if (!DoesFolderExist(localFolderResolved)) { mkdir(localFolderResolved.chars, FOLDER_PERMISSIONS); }
 	
 	StrArray commonTags = EMPTY;
-	AddTag(&commonTags, options.useCompilerMsvc ? T_MSVC_CL : T_CLANG);
-	if (options.useCompilerMsvc) { AddTag(&commonTags, T_MSVC_CL_OR_LINK); }
-	IF_WINDOWS(AddTag(&commonTags, T_WINDOWS));
-	IF_LINUX(AddTag(&commonTags, T_LINUX));
-	IF_OSX(AddTag(&commonTags, T_OSX));
+	AddTag(&commonTags, options.useCompilerMsvc ? "cl" : "clang");
+	if (options.useCompilerMsvc) { AddTag(&commonTags, "ClOrLink"); }
+	IF_WINDOWS(AddTag(&commonTags, "Windows"));
+	IF_LINUX(AddTag(&commonTags, "Linux"));
+	IF_OSX(AddTag(&commonTags, "OSX"));
 	
 	// +==============================+
 	// |         Run Metagen          |
@@ -140,7 +133,7 @@ int build_main(ProgramParams* params)
 		AddArgNt(&rcArgs, RC_OUTPUT_FILE, "logo.res");
 		AddArgNt(&rcArgs, CLI_QUOTED_ARG, "[ROOT]/data/logo.rc");
 		InitializeMsvcIf(StrLit(PIG_BUILD_ROOT), &isMsvcInitialized);
-		RunCliProgramAndExitOnFailureTagsLit(StrLit(EXE_MSVC_RC), T_MSVC_RC T_WINDOWS, &rcArgs, StrLit("Failed to compile logo.rc into logo.res!"));
+		RunCliProgramAndExitOnFailureTagsLit(StrLit(EXE_MSVC_RC), "rc|Windows", &rcArgs, StrLit("Failed to compile logo.rc into logo.res!"));
 		AssertFileExist(StrLit("logo.res"), true);
 	}
 	#endif
@@ -168,18 +161,18 @@ int build_main(ProgramParams* params)
 			CliArgs args = EMPTY;
 			AddArgList(&args, &commonCompilerFlags);
 			AddArgStr(&args, CLI_QUOTED_ARG, srcPath);
-			if (!def->isDll) { AddTaggedArgStr(&args, T_MSVC_CL, CL_OBJ_FILE, objPath); }
+			if (!def->isDll) { AddTaggedArgStr(&args, "cl", CL_OBJ_FILE, objPath); }
 			
-			AddTaggedArg(&args, T_MSVC_CL, CL_LINK);
+			AddTaggedArg(&args, "cl", CL_LINK);
 			AddArgList(&args, &commonLinkerFlags);
-			AddTaggedArgStr(&args, T_MSVC_CL, LINK_OUTPUT_FILE,  outputPath);
-			AddTaggedArgStr(&args, T_CLANG,   CLANG_OUTPUT_FILE, outputPath);
+			AddTaggedArgStr(&args, "cl", LINK_OUTPUT_FILE,  outputPath);
+			AddTaggedArgStr(&args, "clang",   CLANG_OUTPUT_FILE, outputPath);
 			
 			StrArray tags = EMPTY;
 			AddStrArray(&tags, &commonTags);
 			AddStr(&tags, targetName);
 			if (def->isDll) { AddStrNt(&tags, "dll"); }
-			AddTag(&tags, def->isCpp ? T_LANG_CPP : T_LANG_C);
+			AddTag(&tags, def->isCpp ? "LangCpp" : "LangC");
 			
 			if (options.useCompilerMsvc) { InitializeMsvcIf(StrLit(PIG_BUILD_ROOT), &isMsvcInitialized); }
 			RunCliProgramAndExitOnFailureTags(compilerExe, tags, &args, FormatStr("Failed to compile %.*s!", StrPrint(outputPath)));
@@ -260,82 +253,82 @@ void HandleCmdLineArgs(StrArray* cmdLineArgs, Array_Targets* targets, BuildOptio
 // +--------------------------------------------------------------+
 void FillCompilerAndLinkerFlags(BuildOptions* options, CliArgs* commonCompilerFlags, CliArgs* commonLinkerFlags)
 {
-	AddTaggedArg(commonCompilerFlags,   T_MSVC_CL, CL_NO_LOGO);
-	AddTaggedArg(commonCompilerFlags,   T_MSVC_CL, CL_FULL_FILE_PATHS);
-	AddTaggedArg(commonCompilerFlags,   T_CLANG,   CLANG_FULL_FILE_PATHS);
-	AddTaggedArg(commonCompilerFlags,   T_MSVC_CL, CL_DEBUG_INFO_IN_OBJ);
-	AddTaggedArgNt(commonCompilerFlags, T_MSVC_CL, CL_ENABLE_LANG_CONFORMANCE_OPTION, "preprocessor");
-	AddTaggedArgNt(commonCompilerFlags, T_MSVC_CL, CL_INCLUDE_DIR,    SRC_FOLDER);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   CLANG_INCLUDE_DIR, SRC_FOLDER);
-	AddTaggedArgNt(commonCompilerFlags, T_MSVC_CL, CL_INCLUDE_DIR,    LOCAL_FOLDER);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   CLANG_INCLUDE_DIR, LOCAL_FOLDER);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   CLANG_DEFINE, "_USE_MATH_DEFINES");
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   CLANG_DEFINE, "strdup=_strdup");
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   CLANG_DEFINE, "_printf=printf");
-	AddTaggedArg(commonCompilerFlags,   T_CLANG,   "-Xclang -flto-visibility-public-std"); //TODO: What does this do?
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   "-ferror-limit=[VAL]", "10000"); //TODO: What does this do?
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   CLANG_M_FLAG, "cx16"); //TODO: What does this do?
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   CLANG_M_FLAG, "sha"); //TODO: What does this do?
+	AddTaggedArg(commonCompilerFlags,   "cl",    CL_NO_LOGO);
+	AddTaggedArg(commonCompilerFlags,   "cl",    CL_FULL_FILE_PATHS);
+	AddTaggedArg(commonCompilerFlags,   "clang", CLANG_FULL_FILE_PATHS);
+	AddTaggedArg(commonCompilerFlags,   "cl",    CL_DEBUG_INFO_IN_OBJ);
+	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_ENABLE_LANG_CONFORMANCE_OPTION, "preprocessor");
+	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_INCLUDE_DIR,    SRC_FOLDER);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_INCLUDE_DIR, SRC_FOLDER);
+	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_INCLUDE_DIR,    LOCAL_FOLDER);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_INCLUDE_DIR, LOCAL_FOLDER);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "_USE_MATH_DEFINES");
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "strdup=_strdup");
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, "_printf=printf");
+	AddTaggedArg(commonCompilerFlags,   "clang", "-Xclang -flto-visibility-public-std"); //TODO: What does this do?
+	AddTaggedArgNt(commonCompilerFlags, "clang", "-ferror-limit=[VAL]", "10000"); //TODO: What does this do?
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_M_FLAG, "cx16"); //TODO: What does this do?
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_M_FLAG, "sha"); //TODO: What does this do?
 	
 	// Debug/Release Dependent Options
-	AddTaggedArgNt(commonCompilerFlags, T_MSVC_CL, CL_OPTIMIZATION_LEVEL, options->releaseBuild ? "2" : "d");
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   CLANG_OPTIMIZATION_LEVEL, options->releaseBuild ? "2" : "0");
-	AddTaggedArgNt(commonCompilerFlags, T_MSVC_CL, CL_DEFINE,    options->releaseBuild ? "BUILD_DEBUG=0" : "BUILD_DEBUG=1");
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   CLANG_DEFINE, options->releaseBuild ? "BUILD_DEBUG=0" : "BUILD_DEBUG=1");
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG,   CLANG_DEFINE, options->releaseBuild ? "NDEBUG" : "_DEBUG");
+	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_OPTIMIZATION_LEVEL, options->releaseBuild ? "2" : "d");
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_OPTIMIZATION_LEVEL, options->releaseBuild ? "2" : "0");
+	AddTaggedArgNt(commonCompilerFlags, "cl",    CL_DEFINE,    options->releaseBuild ? "BUILD_DEBUG=0" : "BUILD_DEBUG=1");
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, options->releaseBuild ? "BUILD_DEBUG=0" : "BUILD_DEBUG=1");
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEFINE, options->releaseBuild ? "NDEBUG" : "_DEBUG");
 	if (options->releaseBuild)
 	{
-		AddTaggedArgNt(commonCompilerFlags, T_MSVC_CL, CL_OPTIMIZATION_LEVEL, "b1"); //Allows expansion only of functions marked "inline", "__inline", or "__forceinline"
+		AddTaggedArgNt(commonCompilerFlags, "cl", CL_OPTIMIZATION_LEVEL, "b1"); //Allows expansion only of functions marked "inline", "__inline", or "__forceinline"
 	}
 	else
 	{
-		// AddTaggedArg(commonCompilerFlags,   T_MSVC_CL, CL_DEBUG_INFO);
-		AddTaggedArg(commonCompilerFlags,   T_CLANG, CLANG_DEBUG_INFO_DEFAULT);
-		AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DEBUG_INFO, options->useDwarfFormat ? "dwarf" : "codeview");
+		// AddTaggedArg(commonCompilerFlags,   "cl", CL_DEBUG_INFO);
+		AddTaggedArg(commonCompilerFlags,   "clang", CLANG_DEBUG_INFO_DEFAULT);
+		AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DEBUG_INFO, options->useDwarfFormat ? "dwarf" : "codeview");
 	}
 	
 	// Warnings
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_WARNING_LEVEL, "all");
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_UNKNOWN_WARNING_OPTION);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_MISSING_BRACES);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_FUNCTION);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_PARAMETER);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_VALUE);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_VARIABLE);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_LOCAL_TYPEDEF);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_BUT_SET_VARIABLE);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_WRITABLE_STRINGS);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_MISSING_FIELD_INITIALIZERS);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_DEPRECATED_REGISTER);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_DEPRECATED_DECLARATIONS);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_SINGLE_BIT_BITFIELD_CONVERSION);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_COMPARE_DISTINCT_POINTER_TYPES);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_INITIALIZER_OVERRIDES);
-	AddTaggedArgNt(commonCompilerFlags, T_CLANG, CLANG_DISABLE_WARNING, CLANG_WARNING_INCOMP_PNTR_DISCARDS_QUALIFIERS);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_WARNING_LEVEL, "all");
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_UNKNOWN_WARNING_OPTION);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_MISSING_BRACES);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_FUNCTION);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_PARAMETER);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_VALUE);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_VARIABLE);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_LOCAL_TYPEDEF);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_UNUSED_BUT_SET_VARIABLE);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_WRITABLE_STRINGS);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_MISSING_FIELD_INITIALIZERS);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_DEPRECATED_REGISTER);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_DEPRECATED_DECLARATIONS);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_SINGLE_BIT_BITFIELD_CONVERSION);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_COMPARE_DISTINCT_POINTER_TYPES);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_INITIALIZER_OVERRIDES);
+	AddTaggedArgNt(commonCompilerFlags, "clang", CLANG_DISABLE_WARNING, CLANG_WARNING_INCOMP_PNTR_DISCARDS_QUALIFIERS);
 	
 	// Linker flags (for MSVC these have to come after the /link argument)
-	AddTaggedArg(commonLinkerFlags,   T_MSVC_CL "|dll",       LINK_BUILD_DLL);
-	AddTaggedArg(commonLinkerFlags,   T_CLANG   "|dll",       LINK_BUILD_DLL);
-	AddTaggedArgNt(commonLinkerFlags, T_CLANG,                "-fuse-ld=[VAL]", "lld"); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, T_WINDOWS "|dll=false", CLI_QUOTED_ARG, "logo.res");
-	AddTaggedArgNt(commonLinkerFlags, T_MSVC_CL,              "/MANIFEST:[VAL]", "EMBED");
-	AddTaggedArgNt(commonLinkerFlags, T_CLANG,    "-Xlinker " "/MANIFEST:[VAL]", "EMBED");
-	AddTaggedArg(commonLinkerFlags,   T_MSVC_CL,  LINK_DISABLE_INCREMENTAL);
-	AddTaggedArgNt(commonLinkerFlags, T_MSVC_CL,              "/pdbaltpath:[VAL]", "%_PDB%");
-	AddTaggedArgNt(commonLinkerFlags, T_CLANG,    "-Xlinker " "/pdbaltpath:[VAL]", "%_PDB%");
-	AddTaggedArgNt(commonLinkerFlags, T_MSVC_CL,              LINK_NATVIS_PATH, SRC_FOLDER "/natvis/base.natvis");
-	AddTaggedArgNt(commonLinkerFlags, T_CLANG,    "-Xlinker " LINK_NATVIS_PATH, SRC_FOLDER "/natvis/base.natvis");
-	AddTaggedArg(commonLinkerFlags,   T_MSVC_CL,  LINK_NO_EXP); //TODO: What does this do?
-	AddTaggedArg(commonLinkerFlags,   T_MSVC_CL,  LINK_NO_COFF_GRP_INFO); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, T_MSVC_CL,              LINK_OPT, "ref"); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, T_CLANG,    "-Xlinker " LINK_OPT, "ref"); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, T_MSVC_CL,              LINK_OPT, "icf"); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, T_CLANG,    "-Xlinker " LINK_OPT, "noicf"); //TODO: What does this do?
+	AddTaggedArg(commonLinkerFlags,   "cl|dll",            LINK_BUILD_DLL);
+	AddTaggedArg(commonLinkerFlags,   "clang|dll",         LINK_BUILD_DLL);
+	AddTaggedArgNt(commonLinkerFlags, "clang",             "-fuse-ld=[VAL]", "lld"); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "Windows|dll=false", CLI_QUOTED_ARG, "logo.res");
+	AddTaggedArgNt(commonLinkerFlags, "cl",                "/MANIFEST:[VAL]", "EMBED");
+	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " "/MANIFEST:[VAL]", "EMBED");
+	AddTaggedArg(commonLinkerFlags,   "cl",                LINK_DISABLE_INCREMENTAL);
+	AddTaggedArgNt(commonLinkerFlags, "cl",                "/pdbaltpath:[VAL]", "%_PDB%");
+	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " "/pdbaltpath:[VAL]", "%_PDB%");
+	AddTaggedArgNt(commonLinkerFlags, "cl",                LINK_NATVIS_PATH, SRC_FOLDER "/natvis/base.natvis");
+	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " LINK_NATVIS_PATH, SRC_FOLDER "/natvis/base.natvis");
+	AddTaggedArg(commonLinkerFlags,   "cl",                LINK_NO_EXP); //TODO: What does this do?
+	AddTaggedArg(commonLinkerFlags,   "cl",                LINK_NO_COFF_GRP_INFO); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "cl",                LINK_OPT, "ref"); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " LINK_OPT, "ref"); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "cl",                LINK_OPT, "icf"); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "clang",             "-Xlinker " LINK_OPT, "noicf"); //TODO: What does this do?
 	
 	//radlink extra options
-	AddTaggedArg(commonLinkerFlags,   T_MSVC_CL "|radlink", "/NOIMPLIB"); //TODO: What does this do?
-	AddTaggedArgNt(commonLinkerFlags, T_MSVC_CL "|radlink",             LINK_NATVIS_PATH, SRC_FOLDER "/linker/linker.natvis");
-	AddTaggedArgNt(commonLinkerFlags, T_CLANG   "|radlink", "-Xlinker " LINK_NATVIS_PATH, SRC_FOLDER "/linker/linker.natvis");
+	AddTaggedArg(commonLinkerFlags,   "cl|radlink", "/NOIMPLIB"); //TODO: What does this do?
+	AddTaggedArgNt(commonLinkerFlags, "cl|radlink",             LINK_NATVIS_PATH, SRC_FOLDER "/linker/linker.natvis");
+	AddTaggedArgNt(commonLinkerFlags, "clang|radlink", "-Xlinker " LINK_NATVIS_PATH, SRC_FOLDER "/linker/linker.natvis");
 }
 
 // +--------------------------------------------------------------+
